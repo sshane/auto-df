@@ -31,8 +31,10 @@ class AutoDFSupport:
 
     self.scale_to = [0, 1]
     self._avg_time = 1 / 20.  # openpilot runs latcontrol at 100hz, so this makes sense
-    self.x_lenth = round(10 / self._avg_time)  # how long in seconds for input sample
+    self.x_lenth = round(30 / self._avg_time)  # how long in seconds for input sample
     self.y_future = round(2.5 / self._avg_time)  # how far into the future we want to be predicting, in seconds (0.01 is next sample)
+    self.to_skip = True
+    self.skip_every = round(0.15 / self._avg_time)  # how many seconds to skip between timesteps
     self.lock = Lock()
     self.n_threads = 0
     self.split_between = 512
@@ -81,13 +83,27 @@ class AutoDFSupport:
       keys, data = ast.literal_eval(data[0]), data[1:]
       assert self.keys == keys, 'Keys do not match'
 
-      for line in data:
+      last_line = None
+      for idx, line in enumerate(data):
         try:
           line = dict(zip(keys, ast.literal_eval(line)))
-          line['profile'] = self.profile_map[line['profile']]
+          if None in [line['a_lead'], line['v_lead'], line['x_lead']]:  # skip samples without lead
+            continue
+
+          if line['profile'] == 3:  # set auto mode samples to last mode profile
+            if last_line is not None:
+              line['profile'] = last_line['profile']
+            else:
+              continue
+
+          if not isinstance(line['profile'], int):
+            line['profile'] = self.profile_map[line['profile']]
+
+          last_line = line
           self.driving_data.append(line)
-        except:
-          print('Error parsing line: `{}`'.format(line))
+        except Exception as e:
+          print(e)
+          raise Exception('Error parsing line: `{}`'.format(line))
 
   def normalize_data(self):
     print('Normalizing data...', flush=True)
@@ -97,6 +113,7 @@ class AutoDFSupport:
       if inp != 'live_tracks':
         to_append = data_t[idx]
         if inp not in ['time', 'profile']:
+          self.test = to_append
           self.scales[inp] = [np.amin(to_append), np.amax(to_append)]
           to_append = self.norm(to_append.astype(np.float64), inp)
         data_rest.append(to_append)
@@ -130,6 +147,7 @@ class AutoDFSupport:
           data_split.append([])
       data_split[counter].append(line)
     self.driving_data = data_split
+    print('Sequences: {}'.format(len(self.driving_data)))
 
   def tokenize_data(self):
     print('Tokenizing data...', flush=True)
@@ -173,9 +191,12 @@ class AutoDFSupport:
       x = [[sample[des_key] for des_key in self.model_inputs] for sample in seq_x]
       y = [[self.one_hot(sample[des_key]) for des_key in self.model_outputs] for sample in seq_y]
 
+      if self.to_skip:
+        x = x[::self.skip_every]
+
       x_train.append(x)
       if self.one_sample:
-        y_train.append(y[0][0])
+        y_train.append(y[-1][0])
       else:
         y_train.append(y)
 

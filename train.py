@@ -1,7 +1,7 @@
 import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-import wandb
-from wandb.keras import WandbCallback
+# import wandb
+# from wandb.keras import WandbCallback
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow import keras
@@ -44,12 +44,10 @@ os.chdir(BASEDIR)
 
 def show_pred_new(epoch=0, sample_idx=None, figure_idx=0):
   if sample_idx is None:
-    sample_idx = random.randrange(len(x_test))
-  x = x_test[sample_idx]
-  y = y_test[sample_idx]
-
-  pred = model.predict(np.array([x]))[0]
-
+    sample_idx = random.randrange(len(auto.x_test))
+  x = auto.x_test[sample_idx]
+  y = auto.y_test[sample_idx]
+  pred = auto.model.predict(np.array([x]))[0]
 
   plt.figure(figure_idx)
   plt.clf()
@@ -65,9 +63,9 @@ class ShowPredictions(tf.keras.callbacks.Callback):
   def __init__(self):
     super().__init__()
     self.every = 1
-    self.sample_idx1 = random.randrange(len(x_test))
-    self.sample_idx2 = random.randrange(len(x_test))
-    self.sample_idx3 = random.randrange(len(x_test))
+    self.sample_idx1 = random.randrange(len(auto.x_test))
+    self.sample_idx2 = random.randrange(len(auto.x_test))
+    self.sample_idx3 = random.randrange(len(auto.x_test))
     # self.sample_idx1 = 0
     # self.sample_idx2 = 4
     # self.sample_idx3 = 8
@@ -79,87 +77,94 @@ class ShowPredictions(tf.keras.callbacks.Callback):
       show_pred_new(epoch, self.sample_idx3, 2)
 
 
-print("Loading data...", flush=True)
-x_train = np.load('model_data/x_train.npy')
-y_train = np.load('model_data/y_train.npy')
-with open("model_data/scales", "rb") as f:
-  scales = pickle.load(f)
+class AutoDynamicFollow:
+  def __init__(self):
+    self.test_size = 0.15
 
-samples = 'all'
-if samples != 'all':
-  x_train = np.array(x_train[:samples])
-  y_train = np.array(y_train[:samples])
+  def start(self):
+    self.load_data()
+    self.train()
 
-x_train = np.array([i.flatten() for i in x_train])
-y_train = np.array([i.flatten() for i in y_train])
-# y_train = helper.unnorm(y_train, 'eps_torque')
+  def load_data(self):
+    print("Loading data...", flush=True)
+    self.x_train = np.load('model_data/x_train.npy')
+    self.y_train = np.load('model_data/y_train.npy')
+    with open("model_data/scales", "rb") as f:
+      self.scales = pickle.load(f)
 
-x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.15)
-print(x_train.shape)
-print(y_train.shape)
+    samples = 'all'
+    if samples != 'all':
+      self.x_train = np.array(self.x_train[:samples])
+      self.y_train = np.array(self.y_train[:samples])
+    self.x_train = np.array([i.flatten() for i in self.x_train])
+    # self.y_train = np.array([i.flatten() for i in self.y_train])
 
-# opt = keras.optimizers.Adadelta(lr=2) #lr=.000375)
-opt = keras.optimizers.RMSprop(lr=0.001)#, decay=1e-5)
-# opt = keras.optimizers.Adagrad(lr=0.00025)
-opt = keras.optimizers.SGD(lr=0.1, momentum=0.3)
-opt = keras.optimizers.Adagrad()
-# opt = 'rmsprop'
-# opt = keras.optimizers.Adadelta()
-opt = keras.optimizers.Ftrl(0.1)
-opt = keras.optimizers.Adam(amsgrad=True)
-# opt = 'adam'
+    self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.x_train, self.y_train, test_size=self.test_size)
+    print(self.x_train.shape)
+    print(self.y_train.shape)
 
-a_function = "relu"
-dropout = 0.1
+  def train(self):
+    # opt = keras.optimizers.Adadelta(lr=2) #lr=.000375)
+    # opt = keras.optimizers.RMSprop(lr=0.001)#, decay=1e-5)
+    # opt = keras.optimizers.Adagrad(lr=0.00025)
+    # opt = keras.optimizers.SGD(lr=0.1, momentum=0.3)
+    # opt = keras.optimizers.Adagrad()
+    # opt = 'rmsprop'
+    # opt = keras.optimizers.Adadelta()
+    # opt = 'adam'
+    opt = keras.optimizers.Adam(amsgrad=True)
 
-model = Sequential()
-# model.add(Dropout(0.2))
-# model.add(GRU(128, return_sequences=True, input_shape=x_train.shape[1:]))
-# model.add(GRU(64, return_sequences=True))
-# model.add(GRU(64, return_sequences=True))
-# model.add(GRU(64, return_sequences=True))
-# model.add(GRU(y_train.shape[1], return_sequences=False))
-# model.add(Lambda(lambda x: x[:,0,:,:], output_shape=(1, 50, 1) + x_train.shape[2:]))
+    a_function = "relu"
 
-denses = [256, 128, 64]
+    self.model = Sequential()
+    # model.add(Dropout(0.2))
+    # model.add(GRU(128, return_sequences=True, input_shape=x_train.shape[1:]))
+    # model.add(GRU(64, return_sequences=True))
+    # model.add(GRU(64, return_sequences=True))
+    # model.add(GRU(64, return_sequences=True))
+    # model.add(GRU(y_train.shape[1], return_sequences=False))
+    # model.add(Lambda(lambda x: x[:,0,:,:], output_shape=(1, 50, 1) + x_train.shape[2:]))
 
-for idx, n in enumerate(denses):
-  if idx == 0:
-    model.add(Dense(n, activation=a_function, input_shape=x_train.shape[1:]))
-  else:
-    model.add(Dense(n, activation=a_function))
+    denses = [128, 128, 64, 64]
 
-model.add(Dense(y_train.shape[1], activation='softmax'))
+    for idx, n in enumerate(denses):
+      if idx == 0:
+        self.model.add(Dense(n, activation=a_function, input_shape=self.x_train.shape[1:]))
+      else:
+        self.model.add(Dense(n, activation=a_function))
+      self.model.add(BatchNormalization())
 
-model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['mae'])
-# tensorboard = TensorBoard(log_dir="C:/Git/dynamic-follow-tf-v2/train_model/logs/{}".format("final model"))
-# callbacks = [ShowPredictions(), WandbCallback()]
-show_predictions = ShowPredictions()
-name = ', '.join(['{}'.format(n) for n in denses])
-print(name)
-wandb.init(project="auto-df", name=name)
-w_and_b = WandbCallback()
-callbacks = [show_predictions, w_and_b]
-model.fit(x_train, y_train,
-          shuffle=True,
-          batch_size=16,
-          epochs=10000,
-          validation_data=(x_test, y_test),
-          # sample_weight=np.full((len(y_train)), 100),
-          callbacks=callbacks)
+    self.model.add(Dense(self.y_train.shape[1], activation='softmax'))
+
+    self.model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['acc'])
+    name = ', '.join(['{}'.format(n) for n in denses])
+    print(name)
+    # wandb.init(project="auto-df", name=name)
+    # w_and_b = WandbCallback()
+    callbacks = [ShowPredictions()]
+    self.model.fit(self.x_train, self.y_train,
+                   shuffle=True,
+                   batch_size=16,
+                   epochs=10000,
+                   validation_data=(self.x_test, self.y_test),
+                   # sample_weight=np.full((len(y_train)), 100),
+                   callbacks=callbacks)
 
 
-preds = model.predict(x_test).reshape(1, -1)
-diffs = [abs(pred - ground) for pred, ground in zip(preds[0], y_test[0])]
+auto = AutoDynamicFollow()
+auto.start()
 
-print("Test accuracy: {}%".format(round(np.interp(sum(diffs) / len(diffs), [0, 1], [1, 0]) * 100, 4)))
-
-for i in range(20):
-  c = random.randint(0, len(x_test))
-  print('Ground truth: {}'.format(support.unnorm(y_test[c][0], 'eps_torque')))
-  print('Prediction: {}'.format(support.unnorm(model.predict(np.array([x_test[c]]))[0][0], 'eps_torque')))
-  print()
+# preds = model.predict(x_test).reshape(1, -1)
+# diffs = [abs(pred - ground) for pred, ground in zip(preds[0], y_test[0])]
+#
+# print("Test accuracy: {}%".format(round(np.interp(sum(diffs) / len(diffs), [0, 1], [1, 0]) * 100, 4)))
+#
+# for i in range(20):
+#   c = random.randint(0, len(x_test))
+#   print('Ground truth: {}'.format(support.unnorm(y_test[c][0], 'eps_torque')))
+#   print('Prediction: {}'.format(support.unnorm(model.predict(np.array([x_test[c]]))[0][0], 'eps_torque')))
+#   print()
 
 
 def save_model(name='model'):
-  model.save('models/h5_models/{}.h5'.format(name))
+  auto.model.save('models/h5_models/{}.h5'.format(name))
