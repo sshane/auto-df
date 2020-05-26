@@ -20,7 +20,7 @@ class AutoDFSupport:
     self.live_tracks_keys = ['v_rel', 'a_rel', 'd_rel', 'y_rel']  # all keys
     self.live_track_input_keys = ['v_rel', 'd_rel']  # only keep these keys
 
-    self.model_inputs = ['v_ego', 'a_lead', 'v_lead', 'x_lead']
+    self.model_inputs = ['v_ego', 'v_lead', 'x_lead']
     self.model_outputs = ['profile']
 
     self.one_output_feature = len(self.model_outputs) == 1
@@ -31,16 +31,16 @@ class AutoDFSupport:
 
     self.scale_to = [0, 1]
     self._avg_time = 1 / 20.  # openpilot runs latcontrol at 100hz, so this makes sense
-    self.x_lenth = round(30 / self._avg_time)  # how long in seconds for input sample
+    self.x_length = round(35 / self._avg_time)  # how long in seconds for input sample
     self.y_future = round(2.5 / self._avg_time)  # how far into the future we want to be predicting, in seconds (0.01 is next sample)
     self.to_skip = True
-    self.skip_every = round(0.15 / self._avg_time)  # how many seconds to skip between timesteps
+    self.skip_every = round(0.2 / self._avg_time)  # how many seconds to skip between timesteps
     self.lock = Lock()
     self.n_threads = 0
     self.split_between = 512
-    self.max_threads = 256
+    self.max_threads = 512
 
-    self.seq_len = self.x_lenth + self.y_future  # how many seconds should the model see at any one time
+    self.seq_len = self.x_length + self.y_future  # how many seconds should the model see at any one time
 
     print(f'y_future: {self.y_future}')
     print(f'seq_len: {self.seq_len}\n')
@@ -87,6 +87,15 @@ class AutoDFSupport:
       for idx, line in enumerate(data):
         try:
           line = dict(zip(keys, ast.literal_eval(line)))
+          if data_file == 'df_data2' and line['v_ego'] < 60 * 0.44704:  # only keep high speed samples since low speed samples differ
+            continue
+
+          if data_file == 'df_data2':  # only keep high speed samples since low speed samples differ
+            if line['v_ego'] < 63 * 0.44704:
+              if np.random.random() < 0.85:  # only keep roughly 15 percent of samples under 60 mph
+                continue
+
+
           if None in [line['a_lead'], line['v_lead'], line['x_lead']]:  # skip samples without lead
             continue
 
@@ -172,22 +181,22 @@ class AutoDFSupport:
     sections = split_list(self.driving_data, round(len(self.driving_data) / self.split_between), False)
     for idx, section in enumerate(sections):
       while self.n_threads >= self.max_threads:
-        time.sleep(1/10)
+        time.sleep(1/100)
       Thread(target=self.format_thread, args=(section, idx)).start()
 
     while self.n_threads != 0:
       # with self.lock:
-      # print(f'\nWaiting for {self.n_threads} threads to complete...', flush=True, end='\r')
-      #   print(f'Percentage: {round(len(self.x_train) / len(self.driving_data) * 100, 1)}%')
-      time.sleep(3)
+      print(f'\nWaiting for {self.n_threads} threads to complete...', flush=True, end='\r')
+      # print(f'Percentage: {round(len(self.x_train) / len(self.driving_data) * 100, 1)}%')
+      time.sleep(1)
 
   def format_thread(self, section, idx):
     self.n_threads += 1
     x_train = []
     y_train = []
     for idx, seq in enumerate(section):
-      seq_x = seq[:-self.y_future]
-      seq_y = seq[-self.y_future:]
+      seq_x = seq[:self.x_length]
+      seq_y = seq[self.x_length:]
       x = [[sample[des_key] for des_key in self.model_inputs] for sample in seq_x]
       y = [[self.one_hot(sample[des_key]) for des_key in self.model_outputs] for sample in seq_y]
 
