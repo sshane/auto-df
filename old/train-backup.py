@@ -18,20 +18,6 @@ from utils.auto_df_support import AutoDFSupport
 from utils.BASEDIR import BASEDIR
 from utils.tokenizer import split_list, tokenize
 import ast
-import matplotlib.gridspec as gridspec
-# from keras.callbacks.tensorboard_v1 import TensorBoard
-
-# config = tf.ConfigProto()
-# config.gpu_options.per_process_gpu_memory_fraction = 0.8
-# set_session(tf.Session(config=config))
-# sns.distplot(data_here)
-
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# if gpus:
-#   tf.config.experimental.set_virtual_device_configuration(
-#       gpus[0],
-#       [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)])
-#   logical_gpus = tf.config.experimental.list_logical_devices('GPU')
 
 physical_devices = tf.config.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
@@ -43,34 +29,6 @@ os.chdir(BASEDIR)
 
 fig, ax = plt.subplots(4, 3)
 ax = ax.flatten()
-
-
-def show_pred_new(epoch=0, sample_idx=None, figure_idx=0):
-  if sample_idx is None:
-    sample_idx = random.randrange(len(auto.x_test))
-  x = auto.x_test[sample_idx]
-  y = auto.y_test[sample_idx]
-  pred = auto.model.predict_on_batch(np.array([x]))[0]
-
-  ax[figure_idx].cla()
-  ax[figure_idx].bar(range(3), y, label='ground')
-  ax[figure_idx].bar(range(3), pred, label='pred')
-  # ax[figure_idx].legend()
-  plt.show()
-  plt.pause(0.01)
-  # plt.savefig('models/model_imgs/{}'.format(epoch))
-
-
-class ShowPredictions(tf.keras.callbacks.Callback):
-  def __init__(self):
-    super().__init__()
-    self.every = 10
-    self.sample_idxs = [random.randrange(len(auto.x_test)) for _ in range(len(ax))]
-
-  def on_epoch_end(self, epoch, logs=None):
-    if not (epoch + self.every) % self.every:
-      for idx, sample_idx in enumerate(self.sample_idxs):
-        show_pred_new(epoch, sample_idx, idx)
 
 
 class AutoDynamicFollow:
@@ -87,8 +45,6 @@ class AutoDynamicFollow:
     self.x_train = np.load('model_data/x_train.npy')
     self.y_train = np.load('model_data/y_train.npy')
 
-    # self.x_test = np.load('model_data/x_test.npy')
-    # self.y_test = np.load('model_data/y_test.npy')
     with open("model_data/scales", "rb") as f:
       self.scales = pickle.load(f)
 
