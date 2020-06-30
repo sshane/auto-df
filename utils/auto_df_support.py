@@ -15,6 +15,12 @@ os.chdir(BASEDIR)
 SAVE_PATH = 'model_data'
 
 
+class Track:
+  def __init__(self, speed, distance):
+    self.speed = speed
+    self.distance = distance
+
+
 # noinspection PyTypeChecker
 class DataProcessor:
   def __init__(self):
@@ -27,10 +33,15 @@ class DataProcessor:
 
     self.speed_keys = ['left_lane_speeds', 'middle_lane_speeds', 'right_lane_speeds']
     self.distance_keys = ['left_lane_distances', 'middle_lane_distances', 'right_lane_distances']
+    self.left_lane = [self.speed_keys[0], self.distance_keys[0]]
+    self.middle_lane = [self.speed_keys[1], self.distance_keys[1]]
+    self.right_lane = [self.speed_keys[2], self.distance_keys[2]]
 
     self.profile_map = {'traffic': 0, 'relaxed': 1, 'roadtrip': 2, 'auto': 3}
-
     self.data_file_name = 'df_data_lane_speed'
+
+    # self.max_tracks_per_lane = 6  # this is the end of a dropoff before leveling out. most samples have 2 tracks per lane
+    self.max_tracks = 16  # radar limit for lane data padding. should be found from data, not hardcoded
 
     self.scale_to = [0, 1]
     self._data_rate = 1 / 20.
@@ -44,6 +55,7 @@ class DataProcessor:
     self._setup_dirs()
     self._load_data()
     self._normalize_data()
+    self._flatten_lanes()
     self._split_data()
     self._tokenize_data()
     self._format_data()
@@ -85,7 +97,7 @@ class DataProcessor:
         self.driving_data.append(line)
 
   def _normalize_data(self):
-    print('\nNormalizing data...', flush=True)
+    print('- Normalizing data...', flush=True)
 
     v_egos = [line['v_ego'] for line in self.driving_data]  # get scale for v_ego
     self.scales['v_ego'] = [np.min(v_egos), np.max(v_egos)]
@@ -97,6 +109,7 @@ class DataProcessor:
 
     # Get scale of lane speeds and distances
     all_speeds = []
+    self.all_speeds = []
     all_distances = []
     for line in self.driving_data:
       for speed_key in self.speed_keys:
@@ -124,8 +137,22 @@ class DataProcessor:
     print(f'Samples: {len(self.driving_data)}')
     print(f'Scales: {self.scales}')
 
+  def _flatten_lanes(self):
+    print('- Flattening lane data...', flush=True)
+    # todo: calculate max tracks here for padding, using hardcoded 16 for now
+    for idx, line in enumerate(self.driving_data):
+      # 0 is left, 1 is middle, etc. just so model knows which lane track is in
+      left_tracks = [[s, d, 0] for s, d in zip(*[line[l] for l in self.left_lane])]
+      middle_tracks = [[s, d, 1] for s, d in zip(*[line[l] for l in self.middle_lane])]
+      right_tracks = [[s, d, 2] for s, d in zip(*[line[l] for l in self.right_lane])]
+      builder = left_tracks + middle_tracks + right_tracks
+
+      to_pad = self.max_tracks - len(builder)
+      builder += [[0, 0, 0] for _ in range(to_pad)]  # now pad
+      self.driving_data[idx]['flat_lanes'] = np.array(builder).flatten()
+
   def _split_data(self):
-    print('\nSplitting data by time...', flush=True)
+    print('- Splitting data by time...', flush=True)
     data_split = [[]]
     for idx, line in enumerate(self.driving_data):
       if idx > 0:
@@ -137,7 +164,7 @@ class DataProcessor:
     print('Concurrent sequences from splitting: {}'.format(len(self.driving_data)))
 
   def _tokenize_data(self):
-    print('\nTokenizing data...', flush=True)
+    print('- Tokenizing data...', flush=True)
     data_sequences = []
     for idx, seq in enumerate(self.driving_data):
       # todo: experiment with splitting list instead. lot less training data, but possibly less redundant data
@@ -146,60 +173,28 @@ class DataProcessor:
 
     print('{} sequences of {} length'.format(len(self.driving_data), self.seq_len))
 
-  def format_data(self):
-    print('Formatting data for model...', flush=True)
+  def _format_data(self):
+    # TODO: figure out how to supply up to 16 items per lane * 2 (speed and dist) that's 16 * 6 * number of timesteps per sample. yikes!
+    print('- Formatting data for model...', flush=True)
     self.x_train = []
     self.y_train = []
 
-    # seq_x = map(lambda seq: seq[:-self.y_future], self.driving_data)
-    # seq_y = map(lambda seq: seq[-self.y_future:], self.driving_data)
-    # self.x_train = [[[sample[des_key] for des_key in self.model_inputs] for sample in seq] for seq in seq_x]
-    # self.y_train = [[[sample[des_key] for des_key in self.model_outputs] for sample in seq] for seq in seq_y]
-
-    print(self.keys)
-    self.pbar = tqdm(total=len(self.driving_data))
-    sections = split_list(self.driving_data, round(len(self.driving_data) / self.split_between), False)
-    for idx, section in enumerate(sections):
-      while self.n_threads >= self.max_threads:
-        time.sleep(1/100)
-      Thread(target=self.format_thread, args=(section, idx)).start()
-
-    while self.n_threads != 0:
-      # with self.lock:
-      print(f'\nWaiting for {self.n_threads} threads to complete...', flush=True, end='\r')
-      # print(f'Percentage: {round(len(self.x_train) / len(self.driving_data) * 100, 1)}%')
-      time.sleep(1)
-
-  def format_thread(self, section, idx):
-    self.n_threads += 1
-    x_train = []
-    y_train = []
-    for idx, seq in enumerate(section):
+    for idx, seq in enumerate(self.driving_data):
       seq_x = seq[:self.x_length]
       seq_y = seq[self.x_length:]
-      x = [[sample[des_key] for des_key in self.model_inputs] for sample in seq_x]
-      y = [[self.one_hot(sample[des_key]) for des_key in self.model_outputs] for sample in seq_y]
+      # v_ego = [sample['v_ego'] for sample in seq_x]
+      x = [[sample['v_ego']] + sample['flat_lanes'].tolist() for sample in seq_x]
+      y = seq_y[-1]
 
       if self.to_skip:
         x = x[::self.skip_every]
 
-      x_train.append(x)
-      if self.one_sample:
-        y_train.append(y[-1][0])
-      else:
-        y_train.append(y)
+      self.x_train.append(np.array(x).flatten())
+      self.y_train.append(y)
 
-    with self.lock:
-      self.pbar.update(len(x_train))
-      self.x_train += x_train
-      self.y_train += y_train
-    del x_train
-    del y_train
-    self.n_threads -= 1
-
-  def dump(self):
+  def _dump(self):
+    print('- Dumping data...', flush=True)
     self.x_train, self.y_train = np.array(self.x_train), np.array(self.y_train)
-    print('\nDumping data...', flush=True)
     np.save('model_data/x_train', self.x_train)
     np.save('model_data/y_train', self.y_train)
     with open('model_data/scales', 'wb') as f:
@@ -216,6 +211,11 @@ class DataProcessor:
 
   def norm(self, x, name):
     return np.interp(x, self.scales[name], self.scale_to)
+
+  def one_hot(self, idx):
+    o = [0 for _ in range(len(self.profile_map) - 1)]  # removes auto
+    o[idx] = 1
+    return o
 
 
 if __name__ == '__main__':
