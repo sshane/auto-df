@@ -41,7 +41,6 @@ class DataProcessor:
     self.data_file_name = 'df_data_lane_speed'
 
     # self.max_tracks_per_lane = 6  # this is the end of a dropoff before leveling out. most samples have 2 tracks per lane
-    self.max_tracks = 16  # radar limit for lane data padding. should be found from data, not hardcoded
 
     self.scale_to = [0, 1]
     self._data_rate = 1 / 20.
@@ -139,15 +138,20 @@ class DataProcessor:
 
   def _flatten_lanes(self):
     print('- Flattening lane data...', flush=True)
-    # todo: calculate max tracks here for padding, using hardcoded 16 for now
+    # Calculate max tracks in input data
+    lane_data = []
     for idx, line in enumerate(self.driving_data):
       # 0 is left, 1 is middle, etc. just so model knows which lane track is in
       left_tracks = [[s, d, 0] for s, d in zip(*[line[l] for l in self.left_lane])]
       middle_tracks = [[s, d, 1] for s, d in zip(*[line[l] for l in self.middle_lane])]
       right_tracks = [[s, d, 2] for s, d in zip(*[line[l] for l in self.right_lane])]
-      builder = left_tracks + middle_tracks + right_tracks
+      lane_data.append(left_tracks + middle_tracks + right_tracks)
+    max_tracks = max([len(i) for i in lane_data])
 
-      to_pad = self.max_tracks - len(builder)
+    # Now pad
+    for idx, line in enumerate(lane_data):
+      builder = line
+      to_pad = max_tracks - len(builder)
       builder += [[0, 0, 0] for _ in range(to_pad)]  # now pad
       self.driving_data[idx]['flat_lanes'] = np.array(builder).flatten()
 
@@ -184,7 +188,7 @@ class DataProcessor:
       seq_y = seq[self.x_length:]
       # v_ego = [sample['v_ego'] for sample in seq_x]
       x = [[sample['v_ego']] + sample['flat_lanes'].tolist() for sample in seq_x]
-      y = seq_y[-1]
+      y = self.one_hot(seq_y[-1]['profile'])
 
       if self.to_skip:
         x = x[::self.skip_every]
