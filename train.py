@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split
 from tensorflow.keras.models import load_model
 import os
 import seaborn as sns
-from utils.auto_df_support import AutoDFSupport
+# from utils.auto_df_support import DataProcessor
 from utils.BASEDIR import BASEDIR
 from utils.tokenizer import split_list, tokenize
 import ast
@@ -33,15 +33,16 @@ import matplotlib.gridspec as gridspec
 #       [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)])
 #   logical_gpus = tf.config.experimental.list_logical_devices('GPU')
 
-physical_devices = tf.config.list_physical_devices('GPU')
-tf.config.experimental.set_memory_growth(physical_devices[0], True)
+if "CUDA_VISIBLE_DEVICES" not in os.environ:
+  physical_devices = tf.config.list_physical_devices('GPU')
+  tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
-support = AutoDFSupport()
-support.init()
+# support = AutoDFSupport()
+# support.init()
 os.chdir(BASEDIR)
 
-fig, ax = plt.subplots(4, 3)
+fig, ax = plt.subplots(5, 4)
 ax = ax.flatten()
 
 
@@ -64,7 +65,7 @@ def show_pred_new(epoch=0, sample_idx=None, figure_idx=0):
 class ShowPredictions(tf.keras.callbacks.Callback):
   def __init__(self):
     super().__init__()
-    self.every = 10
+    self.every = 20
     self.sample_idxs = [random.randrange(len(auto.x_test)) for _ in range(len(ax))]
 
   def on_epoch_end(self, epoch, logs=None):
@@ -75,7 +76,7 @@ class ShowPredictions(tf.keras.callbacks.Callback):
 
 class AutoDynamicFollow:
   def __init__(self, cfg):
-    self.test_size = 0.05
+    self.test_size = 0.075
     self.config = cfg
 
   def start(self):
@@ -84,8 +85,8 @@ class AutoDynamicFollow:
 
   def load_data(self):
     print("Loading data...", flush=True)
-    self.x_train = np.load('model_data/x_train.npy')
-    self.y_train = np.load('model_data/y_train.npy')
+    self.x_train = np.load('model_data/x_train.npy', allow_pickle=True)
+    self.y_train = np.load('model_data/y_train.npy', allow_pickle=True)
 
     # self.x_test = np.load('model_data/x_test.npy')
     # self.y_test = np.load('model_data/y_test.npy')
@@ -96,9 +97,9 @@ class AutoDynamicFollow:
     if samples != 'all':
       self.x_train = np.array(self.x_train[:samples])
       self.y_train = np.array(self.y_train[:samples])
-    self.x_train = np.array([i.flatten() for i in self.x_train])
-    # self.x_test = np.array([i.flatten() for i in self.x_test])
-    # self.y_train = np.array([i.flatten() for i in self.y_train])
+    flatten = False  # already flattened in data processor
+    if flatten:
+      self.x_train = np.array([i.flatten() for i in self.x_train])
 
     self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.x_train, self.y_train, test_size=self.test_size)
     print(self.x_train.shape)
@@ -115,7 +116,7 @@ class AutoDynamicFollow:
     # opt = 'adam'
     opt = keras.optimizers.Adam(lr=self.config.learning_rate, amsgrad=True)
 
-    a_function = "relu"
+    a_function = self.config.activation
 
     self.model = Sequential()
     # model.add(Dropout(0.2))
@@ -126,20 +127,21 @@ class AutoDynamicFollow:
     # model.add(GRU(y_train.shape[1], return_sequences=False))
     # model.add(Lambda(lambda x: x[:,0,:,:], output_shape=(1, 50, 1) + x_train.shape[2:]))
 
-    denses = [128, 64, 32]
+    # denses = [128, 64, 32]
 
     self.model.add(Dense(self.config.dense_one, activation=a_function, input_shape=self.x_train.shape[1:]))
+    self.model.add(Dropout(config.dropout_one))
 
     self.model.add(Dense(self.config.dense_two, activation=a_function))
-    self.model.add(Dropout(config.dropout))
+    self.model.add(Dropout(config.dropout_two))
 
     self.model.add(Dense(self.y_train.shape[1], activation='softmax'))
 
-    self.model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['acc', 'mae'])
-    name = ', '.join(['{}'.format(n) for n in denses])
-    print(name)
+    self.model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['acc'])
+    # name = ', '.join(['{}'.format(n) for n in denses])
+    # print(name)
     w_and_b = WandbCallback()
-    callbacks = [w_and_b]
+    callbacks = [w_and_b, ShowPredictions()]
     self.model.fit(self.x_train, self.y_train,
                    shuffle=True,
                    batch_size=self.config.batch_size,
@@ -150,12 +152,16 @@ class AutoDynamicFollow:
 
 
 hyperparameter_defaults = dict(
-  dropout=0.05,
+  dropout_one=0.175,
+  dropout_two=0.26,
+
   dense_one=128,
-  dense_two=64,
-  batch_size=32,
-  learning_rate=0.001,
-  epochs=20,
+  dense_two=96,
+
+  activation='relu',
+  batch_size=96,
+  learning_rate=0.00044,
+  epochs=140,
 )
 
 wandb.init(project="auto-df", config=hyperparameter_defaults)
@@ -179,4 +185,4 @@ auto.start()
 
 
 def save_model(name='model'):
-  auto.model.save('models/h5_models/{}.h5'.format(name))
+  auto.model.save('models/{}.h5'.format(name))

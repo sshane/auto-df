@@ -44,10 +44,10 @@ class DataProcessor:
 
     self.scale_to = [0, 1]
     self._data_rate = 1 / 20.
-    self.x_length = round(45 / self._data_rate)  # how long in seconds for input sample (default 35s)
-    self.y_future = round(1.25 / self._data_rate)  # how far into the future we want to be predicting, in seconds (0.01 is next sample) (default 2.5s)
+    self.x_length = round(30 / self._data_rate)  # how long in seconds for input sample (default 35s)
+    self.y_future = round(1.5 / self._data_rate)  # how far into the future we want to be predicting, in seconds (0.01 is next sample) (default 2.5s)
     self.to_skip = True
-    self.skip_every = round(0.25 / self._data_rate)  # how many seconds to skip between timesteps (default 0.2s)
+    self.skip_every = round(0.4 / self._data_rate)  # how many seconds to skip between timesteps (default 0.2s)
     self.seq_len = self.x_length + self.y_future  # how many seconds should the model see at any one time
 
   def start(self):
@@ -203,6 +203,8 @@ class DataProcessor:
     np.save('model_data/y_train', self.y_train)
     with open('model_data/scales', 'wb') as f:
       pickle.dump(self.scales, f)
+    print('Final data input shape: {}'.format(self.x_train[0].shape))
+    print('Done!')
 
   def _setup_dirs(self):
     if not os.path.exists(SAVE_PATH):
