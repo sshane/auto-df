@@ -1,13 +1,10 @@
 import ast
 import os
-from tqdm import tqdm
-import math
-import time
 import pickle
 import numpy as np
-from threading import Thread, Lock
 from utils.tokenizer import tokenize, split_list
 from utils.BASEDIR import BASEDIR
+import json
 
 os.chdir(BASEDIR)
 
@@ -146,12 +143,12 @@ class DataProcessor:
       middle_tracks = [[s, d, 1] for s, d in zip(*[line[l] for l in self.middle_lane])]
       right_tracks = [[s, d, 2] for s, d in zip(*[line[l] for l in self.right_lane])]
       lane_data.append(left_tracks + middle_tracks + right_tracks)
-    max_tracks = max([len(i) for i in lane_data])
+    self.scales['max_tracks'] = max([len(i) for i in lane_data])
 
     # Now pad
     for idx, line in enumerate(lane_data):
       builder = line
-      to_pad = max_tracks - len(builder)
+      to_pad = self.scales['max_tracks'] - len(builder)
       builder += [[0, 0, 0] for _ in range(to_pad)]  # now pad
       self.driving_data[idx]['flat_lanes'] = np.array(builder).flatten()
 
@@ -201,8 +198,8 @@ class DataProcessor:
     self.x_train, self.y_train = np.array(self.x_train), np.array(self.y_train)
     np.save('model_data/x_train', self.x_train)
     np.save('model_data/y_train', self.y_train)
-    with open('model_data/scales', 'wb') as f:
-      pickle.dump(self.scales, f)
+    with open('model_data/scales', 'w') as f:
+      f.write(json.dumps(self.scales, indent=2))
     print('Final data input shape: {}'.format(self.x_train[0].shape))
     print('Done!')
 

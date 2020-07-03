@@ -8,11 +8,11 @@ from tensorflow import keras
 from tensorflow.keras.layers import Dense, Dropout, LSTM, LeakyReLU, Flatten, BatchNormalization, SimpleRNN, GRU, BatchNormalization, TimeDistributed, Lambda, ReLU, PReLU
 import numpy as np
 import random
+import json
 import matplotlib.pyplot as plt
 import pickle
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.models import load_model
-import os
 import seaborn as sns
 # from utils.auto_df_support import DataProcessor
 from utils.BASEDIR import BASEDIR
@@ -76,7 +76,7 @@ class ShowPredictions(tf.keras.callbacks.Callback):
 
 class AutoDynamicFollow:
   def __init__(self, cfg):
-    self.test_size = 0.075
+    self.test_size = 0.15
     self.config = cfg
 
   def start(self):
@@ -87,11 +87,10 @@ class AutoDynamicFollow:
     print("Loading data...", flush=True)
     self.x_train = np.load('model_data/x_train.npy', allow_pickle=True)
     self.y_train = np.load('model_data/y_train.npy', allow_pickle=True)
-
     # self.x_test = np.load('model_data/x_test.npy')
     # self.y_test = np.load('model_data/y_test.npy')
     with open("model_data/scales", "rb") as f:
-      self.scales = pickle.load(f)
+      self.scales = json.load(f)
 
     samples = 'all'
     if samples != 'all':
@@ -104,6 +103,10 @@ class AutoDynamicFollow:
     self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.x_train, self.y_train, test_size=self.test_size)
     print(self.x_train.shape)
     print(self.y_train.shape)
+
+    print('{} traffic samples'.format(len([i for i in self.y_train if i[0] == 1])))
+    print('{} relaxed samples'.format(len([i for i in self.y_train if i[1] == 1])))
+    print('{} roadtrip samples'.format(len([i for i in self.y_train if i[2] == 1])))
 
   def train(self):
     # opt = keras.optimizers.Adadelta(lr=2) #lr=.000375)
