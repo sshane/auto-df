@@ -1,5 +1,6 @@
 import time
 import numpy as np
+import tensorflow as tf
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.optimizers import Adam
@@ -13,6 +14,7 @@ model.add(Dense(8, activation='relu'))
 model.add(Dense(1))
 
 model.compile(Adam(amsgrad=True), 'mse')
+print('TF VERSION: {}'.format(tf.__version__))
 t = time.time()
 model.fit(x_train, y_train, batch_size=32, validation_split=0.2, epochs=20)
 print('time to completion: {} seconds'.format(round(time.time() - t, 4)))
