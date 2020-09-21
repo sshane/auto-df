@@ -26,7 +26,7 @@ hyperparameter_defaults = dict(
 
   activation='leakyrelu',
 
-  batch_size=128,
+  batch_size=32,
   learning_rate=0.002
 )
 wandb.init(project="auto-df-v2", config=hyperparameter_defaults)
@@ -146,16 +146,16 @@ if TRAIN:
   # sns.distplot(y_train.reshape(-1))
 
   model = Sequential()
-  model.add(Dense(32, input_shape=x_train.shape[1:], activation=LeakyReLU()))
-  model.add(Dense(128, activation=LeakyReLU()))
-  model.add(Dense(64, activation=LeakyReLU()))
-  model.add(Dense(32, activation=LeakyReLU()))
-  model.add(Dense(16, activation=LeakyReLU()))
+  model.add(Dense(32, input_shape=x_train.shape[1:], activation='relu'))
+  model.add(Dense(64, activation='relu'))
+  model.add(Dense(128, activation='relu'))
+  model.add(Dense(128, activation='relu'))
   model.add(Dense(y_train.shape[1]))
 
-  opt = Adam(lr=config.learning_rate, amsgrad=True)
+  # opt = Adam(lr=config.learning_rate, amsgrad=True)
+  opt = Adam(lr=0.001, amsgrad=True)
   # opt = Adadelta(1)
-  opt = SGD(lr=0.01, momentum=0.9, decay=0.01)
+  # opt = SGD(lr=0.075, momentum=0.8, decay=0.0001)
 
   model.compile(opt, loss='mse', metrics=['mae'])
 
@@ -171,7 +171,7 @@ if TRAIN:
               validation_data=(x_test, y_test),
               callbacks=callbacks)
   except KeyboardInterrupt:
-    print('Training stopped! Save model as df_model_v2.h5?')
-    # affirmative = input('[Y/n]: ').lower().strip()
-    # if affirmative in ['yes', 'ye', 'y']:
-    #   model.save('df_model_v2.h5')
+    print('\nTraining stopped! Save model as df_model_v2.h5?')
+    affirmative = input('[Y/n]: ').lower().strip()
+    if affirmative in ['yes', 'ye', 'y']:
+      model.save('models/df_model_v2.h5')
