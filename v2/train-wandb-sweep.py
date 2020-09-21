@@ -6,7 +6,7 @@ from wandb.keras import WandbCallback
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, LeakyReLU
-from tensorflow.keras.optimizers import Adam, Adadelta, SGD
+from tensorflow.keras.optimizers import Adam, Adadelta
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 import numpy as np
@@ -26,7 +26,7 @@ hyperparameter_defaults = dict(
 
   activation='leakyrelu',
 
-  batch_size=128,
+  batch_size=256,
   learning_rate=0.002
 )
 wandb.init(project="auto-df-v2", config=hyperparameter_defaults)
@@ -47,17 +47,17 @@ def show_pred(sample_idxs, ax, VIS_PREDS):
     ax[idx].cla()
     ax[idx].plot(range(len(prediction_time_steps)), y[idx], label='ground')
     ax[idx].plot(range(len(prediction_time_steps)), pred[idx], label='pred')
-    y_scale = abs(min(y[idx]) - max(y[idx])) * .75 + .05
+    y_scale = abs(min(y[idx]) - max(y[idx])) * .75 + .1
     ax[idx].set_ylim(min(y[idx]) - y_scale, max(y[idx]) + y_scale)
 
 
 class ShowPredictions(tf.keras.callbacks.Callback):
   def __init__(self):
     super().__init__()
-    fig, self.ax = plt.subplots(4, 3)
+    fig, self.ax = plt.subplots(3, 3)
     self.ax = self.ax.flatten()
     self.VIS_PREDS = len(self.ax)
-    self.every = 5
+    self.every = 1
     self.sample_idxs = np.random.choice(range(len(x_test)), self.VIS_PREDS)
 
   def on_epoch_end(self, epoch, logs=None):
@@ -146,16 +146,13 @@ if TRAIN:
   # sns.distplot(y_train.reshape(-1))
 
   model = Sequential()
-  model.add(Dense(32, input_shape=x_train.shape[1:], activation=LeakyReLU()))
-  model.add(Dense(128, activation=LeakyReLU()))
-  model.add(Dense(64, activation=LeakyReLU()))
-  model.add(Dense(32, activation=LeakyReLU()))
-  model.add(Dense(16, activation=LeakyReLU()))
+  model.add(Dense(config.dense_one, input_shape=x_train.shape[1:], activation=LeakyReLU() if config.activation == 'leakyrelu' else config.activation))
+  model.add(Dense(config.dense_two, activation=LeakyReLU() if config.activation == 'leakyrelu' else config.activation))
+  model.add(Dense(config.dense_three, activation=LeakyReLU() if config.activation == 'leakyrelu' else config.activation))
   model.add(Dense(y_train.shape[1]))
 
   opt = Adam(lr=config.learning_rate, amsgrad=True)
   # opt = Adadelta(1)
-  opt = SGD(lr=0.01, momentum=0.9, decay=0.01)
 
   model.compile(opt, loss='mse', metrics=['mae'])
 
@@ -166,7 +163,7 @@ if TRAIN:
 
   try:
     model.fit(x_train, y_train,
-              epochs=10000,
+              epochs=100,
               batch_size=config.batch_size,
               validation_data=(x_test, y_test),
               callbacks=callbacks)

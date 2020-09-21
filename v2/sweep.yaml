@@ -1,7 +1,7 @@
 program: train.py
 method: bayes
 metric:
-  name: val_loss
+  name: loss
   goal: minimize
 
 parameters:
@@ -12,11 +12,11 @@ parameters:
   dense_two:
     distribution: int_uniform
     min: 1
-    max: 256
+    max: 512
   dense_three:
     distribution: int_uniform
     min: 1
-    max: 128
+    max: 512
 
   activation:
     distribution: categorical
@@ -31,4 +31,4 @@ parameters:
   learning_rate:
     distribution: uniform
     min: 0.0001
-    max: 0.05
+    max: 0.025
