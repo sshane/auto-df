@@ -1,0 +1,34 @@
+program: train.py
+method: bayes
+metric:
+  name: val_loss
+  goal: minimize
+
+parameters:
+  dense_one:
+    distribution: int_uniform
+    min: 1
+    max: 512
+  dense_two:
+    distribution: int_uniform
+    min: 1
+    max: 256
+  dense_three:
+    distribution: int_uniform
+    min: 1
+    max: 128
+
+  activation:
+    distribution: categorical
+    values:
+      - leakyrelu
+      - tanh
+      - sigmoid
+  batch_size:
+    distribution: int_uniform
+    min: 8
+    max: 512
+  learning_rate:
+    distribution: uniform
+    min: 0.0001
+    max: 0.05
