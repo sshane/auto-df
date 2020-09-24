@@ -1,33 +1,14 @@
 program: train.py
 method: bayes
 metric:
-  name: loss
+  name: mae
   goal: minimize
 
 parameters:
-  dense_one:
-    distribution: int_uniform
-    min: 1
-    max: 512
-  dense_two:
-    distribution: int_uniform
-    min: 1
-    max: 512
-  dense_three:
-    distribution: int_uniform
-    min: 1
-    max: 512
-
-  activation:
-    distribution: categorical
-    values:
-      - leakyrelu
-      - tanh
-      - sigmoid
   batch_size:
     distribution: int_uniform
     min: 8
-    max: 512
+    max: 1024
   learning_rate:
     distribution: uniform
     min: 0.0001

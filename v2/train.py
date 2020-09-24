@@ -12,24 +12,29 @@ import tensorflow as tf
 import numpy as np
 import seaborn as sns
 import ast
-from v2.conversions import Conversions as CV
+from utils.conversions import Conversions as CV
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(gpus[0], True)
 
-wandb.init(project="auto-df-v2")
+hyperparameter_defaults = dict(
+  batch_size=32,
+  learning_rate=0.0006
+)
+wandb.init(project="auto-df-v2", config=hyperparameter_defaults)
+config = wandb.config
 
 # my_devices = tf.config.experimental.list_physical_devices(device_type='CPU')
 # tf.config.experimental.set_visible_devices(devices=my_devices, device_type='CPU')
 
 os.chdir(os.getcwd())
 
-test_size = 0.001
+test_size = 0.25
 
 
 def show_pred(sample_idxs, ax, VIS_PREDS):
-  x = x_train[sample_idxs]
-  y = y_train[sample_idxs]
+  x = x_test[sample_idxs]
+  y = y_test[sample_idxs]
   pred = model.predict(x)
 
   pred = np.interp(pred, scale_to, scales[model_output])
@@ -53,7 +58,7 @@ class ShowPredictions(tf.keras.callbacks.Callback):
     self.ax = self.ax.flatten()
     self.VIS_PREDS = len(self.ax)
     self.every = 1
-    self.sample_idxs = np.random.choice(range(len(x_train)), self.VIS_PREDS)
+    self.sample_idxs = np.random.choice(range(len(x_test)), self.VIS_PREDS)
 
   def on_epoch_end(self, epoch, logs=None):
     # pass
@@ -79,6 +84,8 @@ def n_grams(input_list, n):
 df_data = []
 print('Loading data...')
 for file in os.listdir('data'):
+  if '.txt' in file:
+    continue
   with open('data/{}'.format(file)) as f:
     file_data = f.read()
   print('Processing {}'.format(file))
@@ -86,16 +93,18 @@ for file in os.listdir('data'):
   df_keys, file_data = file_data[0], file_data[1:]
   df_data += [dict(zip(df_keys, line)) for line in file_data]  # create list of dicts of samples
 
-print(df_keys)
+print('Keys: {}'.format(df_keys))
 scale_to = [0, 1]
 rate = 20
+scales = {}
 # time_in_future = int(.5 * rate)  # in seconds
-prediction_time_steps = [int(t * rate) for t in [0, 1, 2, 3]]  # in seconds -> sample indexes
+# prediction_time_steps = [int(t * rate) for t in [0, 1, 2, 3]]  # in seconds -> sample indexes
+prediction_time_steps = [int(t * rate) for t in np.linspace(0, 2, 5)]  # in seconds -> sample indexes
 print('Prediction time steps: {}'.format(prediction_time_steps))
 
 # Filter data
 print('Total samples from file: {}'.format(len(df_data)))
-df_data = [line for line in df_data if line['v_ego'] > CV.MPH_TO_MS * 5.]  # samples above x mph
+df_data = [line for line in df_data if line['v_ego'] >= CV.MPH_TO_MS * 1.]  # samples above x mph
 df_data = [line for line in df_data if line['lead_status']]  # samples with lead
 df_data = [line for line in df_data if not any([line['left_blinker'], line['right_blinker']])]  # samples without blinker
 
@@ -104,6 +113,57 @@ for line in df_data:  # add TR key to each sample
 
 df_data = [line for line in df_data if line['TR'] < 2.7]  # TR less than x
 print('Filtered samples: {}'.format(len(df_data)))
+
+
+REMOVE_LEAD_TRACKS = True  # remove lead from middle_lane speeds and dists
+if REMOVE_LEAD_TRACKS:
+  distance_epsilon = 2.5  # if diff of track dist and x_lead is larger than this, keep track
+  for line in df_data:
+    if len(line['middle_lane_speeds']) == 0 or not line['lead_status']:
+      continue
+    middle_lane = [(spd, dst) for spd, dst in zip(line['middle_lane_speeds'], line['middle_lane_distances']) if abs(line['x_lead'] - dst) > distance_epsilon]
+    if len(middle_lane) == 0:  # map doesn't like empty lists, so fill them manually
+      line['middle_lane_speeds'], line['middle_lane_distances'] = [], []
+    else:
+      line['middle_lane_speeds'], line['middle_lane_distances'] = map(list, zip(*middle_lane))
+
+
+# For scales to normalize lane data
+lane_speeds = [line['left_lane_speeds'] + line['middle_lane_speeds'] + line['right_lane_speeds'] for line in df_data]
+lane_speeds = [item for sublist in lane_speeds for item in sublist]
+lane_dists = [line['left_lane_distances'] + line['middle_lane_distances'] + line['right_lane_distances'] for line in df_data]
+lane_dists = [item for sublist in lane_dists for item in sublist]
+scales['lane_speeds'] = min(lane_speeds), max(lane_speeds)
+scales['lane_distances'] = min(lane_dists), max(lane_dists)
+
+# Find maxes for padding
+scales['l_lane_max'] = max([len(line['left_lane_speeds']) for line in df_data])
+scales['m_lane_max'] = max([len(line['middle_lane_speeds']) for line in df_data])
+scales['r_lane_max'] = max([len(line['right_lane_speeds']) for line in df_data])
+print('Scales: {}'.format(scales))
+
+for line in df_data:
+  l_distances  = np.interp(line['left_lane_distances'], scales['lane_distances'], scale_to)  # now normalize
+  m_distances = np.interp(line['middle_lane_distances'], scales['lane_distances'], scale_to)
+  r_distances = np.interp(line['right_lane_distances'], scales['lane_distances'], scale_to)
+  l_speeds = np.interp(line['left_lane_speeds'], scales['lane_speeds'], scale_to)
+  m_speeds = np.interp(line['middle_lane_speeds'], scales['lane_speeds'], scale_to)
+  r_speeds = np.interp(line['right_lane_speeds'], scales['lane_speeds'], scale_to)
+
+  left_data = [[0, 0] for _ in range(scales['l_lane_max'])]
+  middle_data = [[0, 0] for _ in range(scales['m_lane_max'])]
+  right_data = [[0, 0] for _ in range(scales['r_lane_max'])]
+
+  for idx, car in enumerate(zip(l_distances, l_speeds)):
+    left_data[idx] = list(car)
+  for idx, car in enumerate(zip(m_distances, m_speeds)):
+    middle_data[idx] = list(car)
+  for idx, car in enumerate(zip(r_distances, r_speeds)):
+    right_data[idx] = list(car)
+
+  lane_data = left_data + middle_data + right_data
+  line['lane_data'] = [item for sublist in lane_data for item in sublist]  # normalized and flattened
+
 
 df_data_split = [[]]  # split sections where user engaged (din't gather data)
 for idx, line in enumerate(df_data):
@@ -120,6 +180,7 @@ for section in df_data_split:
     for section in tokenized:
       df_data_sequences.append(section)  # flattens into one list holding all sequences
 
+
 total_train_time = sum([len(sec) for sec in df_data_split if len(sec) >= max(prediction_time_steps) + 1]) / rate / 60
 print('Training on {} minutes of data!'.format(round(total_train_time, 2)))
 
@@ -127,22 +188,20 @@ TRAIN = True
 if TRAIN:
   print('\nTraining on {} samples.'.format(len(df_data_sequences)))
 
-  model_inputs = ['v_lead', 'a_lead', 'x_lead', 'v_ego', 'a_ego']
+  model_inputs = ['v_lead', 'a_lead', 'v_ego', 'a_ego']
   model_output = 'x_lead'
 
   # Build model data
   # x_train is all of the inputs in the first item of each sequence
-  x_train = [[line[0][key] for key in model_inputs] for line in df_data_sequences]
+  x_train = [[seq[0][key] for key in model_inputs] for seq in df_data_sequences]
   # y_train is multiple timesteps of TR in the future
-  y_train = [[line[ts][model_output] for ts in prediction_time_steps] for line in df_data_sequences]
+  y_train = [[seq[ts][model_output] for ts in prediction_time_steps] for seq in df_data_sequences]
 
   # x_train = [[line[key] for key in inputs] for line in df_data]  # todo: old
   # y_train = [[line['TR']] for line in df_data]  # todo: old
 
   x_train, y_train = np.array(x_train), np.array(y_train)
-  print('x_train, y_train shape: {}, {}'.format(x_train.shape, y_train.shape))
 
-  scales = {}
   for idx, inp in enumerate(model_inputs):
     _inp_data = x_train.take(indices=idx, axis=1)
     scales[inp] = np.min(_inp_data), np.max(_inp_data)
@@ -154,21 +213,30 @@ if TRAIN:
   x_train = np.array(x_train_normalized).T
   y_train = np.interp(y_train, scales[model_output], scale_to)
 
+  ADD_LANE_SPEED_DATA = True
+  if ADD_LANE_SPEED_DATA:
+    x_train = x_train.tolist()
+    for idx, line in enumerate(x_train):
+      line += df_data_sequences[idx][0]['lane_data']
+    x_train = np.array(x_train)
+  print('x_train, y_train shape: {}, {}'.format(x_train.shape, y_train.shape))
+
   x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=test_size)
 
   # sns.distplot(y_train.reshape(-1))
 
   model = Sequential()
-  model.add(Dense(48, input_shape=x_train.shape[1:], activation='relu'))
-  model.add(Dropout(0.07))
-  model.add(Dense(96, activation='relu'))
-  model.add(Dropout(0.1))
-  model.add(Dense(128, activation='relu'))
-  model.add(Dropout(0.15))
+  model.add(Dense(68, input_shape=x_train.shape[1:], activation=LeakyReLU()))
+  # model.add(Dropout(0.07))
+  model.add(Dense(72, activation=LeakyReLU()))
+  model.add(Dense(128, activation=LeakyReLU()))
+  # model.add(Dropout(0.1))
+  model.add(Dense(164, activation=LeakyReLU()))
+  # model.add(Dropout(0.15))
   model.add(Dense(y_train.shape[1]))
 
-  # opt = Adam(lr=config.learning_rate, amsgrad=True)
-  opt = Adam(lr=0.001, amsgrad=True)
+  opt = Adam(lr=config.learning_rate, amsgrad=True)
+  # opt = Adam(lr=0.001, amsgrad=True)
   # opt = Adadelta(1)
   # opt = SGD(lr=0.5, momentum=0.9, decay=0.0001)
 
@@ -181,12 +249,12 @@ if TRAIN:
 
   try:
     model.fit(x_train, y_train,
-              epochs=1000000,
-              batch_size=8,
-              # validation_data=(x_test, y_test),
+              epochs=100,
+              batch_size=config.batch_size,
+              validation_data=(x_test, y_test),
               callbacks=callbacks)
   except KeyboardInterrupt:
     print('\nTraining stopped! Save model as df_model_v2.h5?')
     affirmative = input('[Y/n]: ').lower().strip()
     if affirmative in ['yes', 'ye', 'y']:
-      model.save('models/df_model_v2.h5')
+      model.save('models/df_model_v2_leakyrelu_relu.h5')
