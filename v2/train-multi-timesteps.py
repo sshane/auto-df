@@ -5,7 +5,7 @@ import wandb
 from wandb.keras import WandbCallback
 import matplotlib.pyplot as plt
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, LeakyReLU
+from tensorflow.keras.layers import Dense, Dropout, LeakyReLU, GRU
 from tensorflow.keras.optimizers import Adam, Adadelta, SGD
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
@@ -30,7 +30,7 @@ config = wandb.config
 
 os.chdir(os.getcwd())
 
-test_size = 0.25
+test_size = 0.1
 
 
 def linspace(start, stop, step=1.):
@@ -52,8 +52,9 @@ def show_pred(sample_idxs, ax, VIS_PREDS):
 
   for idx in range(VIS_PREDS):
     ax[idx].cla()
-    ax[idx].plot(range(len(prediction_time_steps)), y[idx], label='ground')
-    ax[idx].plot(range(len(prediction_time_steps)), pred[idx], label='pred')
+    ax[idx].plot(range(len(x[idx])), x[idx], label='ground')
+    ax[idx].plot(range(len(y[idx]) + len(x[idx])), y[idx], label='ground')
+    ax[idx].plot(range(len(pred[idx]) + len(x[idx])), pred[idx], label='pred')
     if model_output == 'TR':
       y_scale = abs(min(y[idx]) - max(y[idx])) * .75 + .05
     else:
@@ -113,12 +114,12 @@ print('Keys: {}'.format(df_keys))
 SCALE_TO = (0, 1)
 RATE = 20
 scales = {}
-STEP_SIZE = 1
-sample_time_steps = [int(t * RATE) for t in linspace(0, 12, step=STEP_SIZE)]
-input_time_steps = [int(t * RATE) for t in linspace(0, 10, step=STEP_SIZE)]
-output_time_steps = [int(t * RATE) for t in linspace(11, 12, step=STEP_SIZE)]
-# prediction_time_steps = [int(t * RATE) for t in np.linspace(0, 2, 5)]  # in seconds -> sample indexes
-# print('Prediction time steps: {}'.format(prediction_time_steps))
+# sample_time_steps = [int(t * RATE) for t in linspace(0, 12, step=STEP_SIZE)]
+input_time_steps = [int(t * RATE) for t in linspace(0, 4, step=0.5)]  # linspace numbers are seconds
+output_time_steps = [int(t * RATE) for t in linspace(4.5, 8.5, step=1.0)]
+
+# todo old: prediction_time_steps = [int(t * RATE) for t in np.linspace(0, 2, 5)]  # in seconds -> sample indexes
+# todo old: print('Prediction time steps: {}'.format(prediction_time_steps))
 
 # Filter data
 print('Total samples from file: {}'.format(len(df_data)))
@@ -183,6 +184,24 @@ print('Filtered samples: {}'.format(len(df_data)))
 #   line['lane_data'] = [item for sublist in lane_data for item in sublist]  # normalized and flattened
 
 
+model_inputs = ['v_lead', 'x_lead', 'a_lead', 'v_ego', 'a_ego']
+model_output = 'x_lead'
+model_keys = model_inputs + [model_output]
+
+for line in df_data:  # get scales of data
+  for key in line:
+    if key in model_keys:
+      if key not in scales:
+        scales[key] = [line[key], line[key]]  # init scale for this key not yet in scales
+      else:  # already in scales, update
+        scales[key] = [min(scales[key][0], line[key]), max(scales[key][1], line[key])]
+# Now normalize
+for line in df_data:
+  for key in line:
+    if key in model_keys:
+      line[key] = np.interp(line[key], scales[key], SCALE_TO)
+
+
 df_data_split = [[]]  # split sections where user engaged (din't gather data)
 for idx, line in enumerate(df_data):
   if not idx:
@@ -191,91 +210,68 @@ for idx, line in enumerate(df_data):
     df_data_split.append([])
   df_data_split[-1].append(line)
 
+
 df_data_sequences = []  # now tokenize each disengaged section
 for section in df_data_split:
-  tokenized = n_grams(section, max(prediction_time_steps) + 1)
+  tokenized = n_grams(section, max(output_time_steps) + 1)
   if len(tokenized):  # removes sections not longer than max timestep for pred
     for seq in tokenized:
       df_data_sequences.append(seq)  # flattens into one list holding all sequences
 
 
-total_train_time = sum([len(sec) for sec in df_data_split if len(sec) >= max(prediction_time_steps) + 1]) / RATE / 60
+total_train_time = sum([len(sec) for sec in df_data_split if len(sec) >= max(output_time_steps) + 1]) / RATE / 60
 print('Training on {} minutes of data!'.format(round(total_train_time, 2)))
+print('\nTraining on {} samples.'.format(len(df_data_sequences)))
 
-TRAIN = True
-if TRAIN:
-  print('\nTraining on {} samples.'.format(len(df_data_sequences)))
+# Build model data (model data are already normalized above!)
+# x_train is all of the inputs for all of the input_time_steps of each sequence
+x_train = [[[seq[ts][key] for key in model_inputs] for ts in input_time_steps] for seq in df_data_sequences]
+# y_train is multiple timesteps of distance in the future based on output_time_steps
+y_train = [[seq[ts][model_output] for ts in output_time_steps] for seq in df_data_sequences]
 
-  model_inputs = ['v_lead', 'a_lead', 'v_ego', 'a_ego']
-  model_output = 'x_lead'
+x_train, y_train = np.array(x_train, dtype=np.float32), np.array(y_train, dtype=np.float32)  # convert to array for training
 
-  # Build model data
-  # x_train is all of the inputs in the first item of each sequence
-  x_train = [[seq[0][key] for key in model_inputs] for seq in df_data_sequences]
-  # y_train is multiple timesteps of TR in the future
-  y_train = [[seq[ts][model_output] for ts in prediction_time_steps] for seq in df_data_sequences]
+# ADD_LANE_SPEED_DATA = True
+# if ADD_LANE_SPEED_DATA:
+#   x_train = x_train.tolist()
+#   for idx, line in enumerate(x_train):
+#     line += df_data_sequences[idx][0]['lane_data']
+#   x_train = np.array(x_train)
+# print('x_train, y_train shape: {}, {}'.format(x_train.shape, y_train.shape))
 
-  # x_train = [[line[key] for key in inputs] for line in df_data]  # todo: old
-  # y_train = [[line['TR']] for line in df_data]  # todo: old
+x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=test_size)
 
-  x_train, y_train = np.array(x_train), np.array(y_train)
+model = Sequential()
+model.add(GRU(16, input_shape=x_train.shape[1:], return_sequences=True))
+model.add(GRU(32, return_sequences=False))
+model.add(Dense(128, activation=LeakyReLU()))
+model.add(Dense(64, activation=LeakyReLU()))
+model.add(Dense(32, activation=LeakyReLU()))
+model.add(Dense(y_train.shape[1]))
 
-  for idx, inp in enumerate(model_inputs):
-    _inp_data = x_train.take(indices=idx, axis=1)
-    scales[inp] = np.min(_inp_data), np.max(_inp_data)
-  scales[model_output] = np.amin(y_train), np.amax(y_train)
+opt = Adam(lr=config.learning_rate, amsgrad=True)
+# opt = Adam(lr=0.001, amsgrad=True)
+# opt = Adadelta(1)
+# opt = SGD(lr=0.5, momentum=0.9, decay=0.0001)
 
-  x_train_normalized = []
-  for idx, inp in enumerate(model_inputs):
-    x_train_normalized.append(np.interp(x_train.take(indices=idx, axis=1), scales[inp], SCALE_TO))
-  x_train = np.array(x_train_normalized).T
-  y_train = np.interp(y_train, scales[model_output], SCALE_TO)
+model.compile(opt, loss='mse', metrics=['mae'])
 
-  ADD_LANE_SPEED_DATA = True
-  if ADD_LANE_SPEED_DATA:
-    x_train = x_train.tolist()
-    for idx, line in enumerate(x_train):
-      line += df_data_sequences[idx][0]['lane_data']
-    x_train = np.array(x_train)
-  print('x_train, y_train shape: {}, {}'.format(x_train.shape, y_train.shape))
+callbacks = []
+WANDB_CALLBACK = False
+if WANDB_CALLBACK:
+  callbacks.append(WandbCallback())
+SHOW_PRED = True
+if SHOW_PRED:
+  callbacks.append(ShowPredictions())
 
-  x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=test_size)
-
-  # sns.distplot(y_train.reshape(-1))
-
-  model = Sequential()
-  model.add(Dense(68, input_shape=x_train.shape[1:], activation=LeakyReLU()))
-  # model.add(Dropout(0.07))
-  model.add(Dense(72, activation=LeakyReLU()))
-  model.add(Dense(128, activation=LeakyReLU()))
-  # model.add(Dropout(0.1))
-  model.add(Dense(164, activation=LeakyReLU()))
-  # model.add(Dropout(0.15))
-  model.add(Dense(y_train.shape[1]))
-
-  opt = Adam(lr=config.learning_rate, amsgrad=True)
-  # opt = Adam(lr=0.001, amsgrad=True)
-  # opt = Adadelta(1)
-  # opt = SGD(lr=0.5, momentum=0.9, decay=0.0001)
-
-  model.compile(opt, loss='mse', metrics=['mae'])
-
-  callbacks = []
-  WANDB_CALLBACK = False
-  if WANDB_CALLBACK:
-    callbacks.append(WandbCallback())
-  SHOW_PRED = True
-  if SHOW_PRED:
-    callbacks.append(ShowPredictions())
-
-  try:
-    model.fit(x_train, y_train,
-              epochs=100,
-              batch_size=config.batch_size,
-              validation_data=(x_test, y_test),
-              callbacks=callbacks)
-  except KeyboardInterrupt:
-    print('\nTraining stopped! Save model as df_model_v2.h5?')
-    affirmative = input('[Y/n]: ').lower().strip()
-    if affirmative in ['yes', 'ye', 'y']:
-      model.save('models/df_model_v2_leakyrelu_relu.h5')
+try:
+  model.fit(x_train, y_train,
+            epochs=100,
+            batch_size=config.batch_size,
+            validation_data=(x_test, y_test),
+            callbacks=callbacks)
+except KeyboardInterrupt:
+  print('\nTraining stopped! Save model as df_model_v2.h5?')
+  affirmative = input('[Y/n]: ').lower().strip()
+  if affirmative in ['yes', 'ye', 'y']:
+    model.save('models/df_model_v2.h5')
